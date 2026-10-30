@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       gdrive_id:
-        description: 'ID do ficheiro jogo.zip no Google Drive (ou URL direta)'
+        description: 'ID do arquivo no Google Drive (ou URL direta)'
         required: true
         type: string
       use_separate_romfs:
@@ -34,20 +34,18 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
-      - name: 2. Configurar Mac e Python (Sem bloqueio PEP 668)
+      - name: 2. Configurar Mac e Python (Corrigido)
         run: |
-          python3 -m pip config set global.break-system-packages true || true
           xcodebuild -downloadComponent MetalToolchain || true
-          brew install xcodegen zstd glslang || true
+          brew install xcodegen zstd glslang sevenzip || true
           brew install --cask dotnet-sdk || true
-          python3 -m pip install --break-system-packages --upgrade pip
-          python3 -m pip install --break-system-packages lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
+          python3 -m pip install --break-system-packages --ignore-installed lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
 
       - name: 3. Clonar o repositorio oficial do nxnative
         run: |
           git clone https://github.com/seedds/nxnative.git
 
-      - name: 4. Recriar o ficheiro prod.keys
+      - name: 4. Recriar o arquivo prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
@@ -63,13 +61,24 @@ jobs:
           mkdir -p ~/Games/TargetGame
           INPUT="${{ inputs.gdrive_id }}"
           if [[ "$INPUT" == *"drive.google.com"* ]] || [[ "$INPUT" != http* ]]; then
-            python3 -m gdown --fuzzy "$INPUT" -O ~/jogo.zip
+            python3 -m gdown --fuzzy "$INPUT" -O ~/ pacote_jogo
           else
-            curl -L "$INPUT" -o ~/jogo.zip
+            curl -L "$INPUT" -o ~/pacote_jogo
           fi
-          ls -lh ~/jogo.zip
-          unzip -q ~/jogo.zip -d ~/Games/TargetGame/
-          rm ~/jogo.zip
+          
+          ls -lh ~/pacote_jogo
+          FILE_TYPE=$(file -b ~/pacote_jogo)
+          echo "Tipo de arquivo baixado: $FILE_TYPE"
+          
+          if [[ "$FILE_TYPE" == *"HTML"* ]] || [[ "$FILE_TYPE" == *"text"* ]]; then
+            echo "ERRO: O Google Drive bloqueou o download e entregou uma pagina HTML em vez do jogo. Verifique se o compartilhamento do arquivo esta como 'Qualquer pessoa com o link' ou suba o arquivo no Gofile.io / Pixeldrain."
+            exit 1
+          fi
+
+          # Extrai caso seja .zip, .7z ou .rar, ou move direto se ja for .nsp/.xci
+          7z x ~/pacote_jogo -o"$HOME/Games/TargetGame/" -y || mv ~/pacote_jogo ~/Games/TargetGame/jogo.nsp
+          rm -f ~/pacote_jogo
+          
           find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
           ls -la ~/Games/TargetGame/
 
