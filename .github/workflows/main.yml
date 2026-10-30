@@ -1,0 +1,75 @@
+name: Compilar Jogo NXNative (macOS ARM64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gdrive_id:
+        description: 'ID do arquivo jogo.zip no Google Drive (ou URL direta)'
+        required: true
+        type: string
+      use_separate_romfs:
+        description: 'Separar RomFS? (Marque para jogos maiores que 4GB)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build_ipa:
+    # Roda em um Mac com chip Apple Silicon (M1/M2)
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: 1. Liberar espaco em disco e checar arquitetura
+        run: |
+          uname -m
+          df -h
+
+      - name: 2. Instalar dependencias no Mac (Homebrew, .NET e Python)
+        run: |
+          xcodebuild -downloadComponent MetalToolchain || true
+          brew install xcodegen zstd glslang
+          brew install --cask dotnet-sdk
+          python3 -m pip install --upgrade pip
+          python3 -m pip install lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
+
+      - name: 3. Clonar o repositorio oficial do nxnative
+        run: |
+          git clone https://github.com/seedds/nxnative.git
+
+      - name: 4. Recriar o arquivo prod.keys a partir dos Secrets
+        env:
+          KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
+        run: |
+          mkdir -p ~/keys
+          echo "$KEYS_CONTENT" > ~/keys/prod.keys
+
+      - name: 5. Baixar e extrair o jogo (Google Drive ou Link Direto)
+        run: |
+          mkdir -p ~/Games/TargetGame
+          if [[ "${{ inputs.gdrive_id }}" == http* ]]; then
+            curl -L "${{ inputs.gdrive_id }}" -o ~/jogo.zip
+          else
+            python3 -m gdown "${{ inputs.gdrive_id }}" -O ~/jogo.zip
+          fi
+          unzip ~/jogo.zip -d ~/Games/TargetGame/
+          rm ~/jogo.zip
+          ls -la ~/Games/TargetGame/
+
+      - name: 6. Compilar o NSP para IPA
+        run: |
+          cd nxnative
+          EXTRA_ARGS=""
+          if [ "${{ inputs.use_separate_romfs }}" = "true" ]; then
+            EXTRA_ARGS="--romfs separate"
+          fi
+          python3 scripts/build_ipa_from_nsp.py ~/Games/TargetGame -k ~/keys/prod.keys $EXTRA_ARGS
+
+      - name: 7. Salvar o IPA pronto para Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jogo-Switch-iOS-IPA
+          path: |
+            ~/Games/TargetGame/*.ipa
+            ~/Games/TargetGame/*.img
+          retention-days: 5
