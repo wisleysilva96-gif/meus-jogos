@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       gdrive_id:
-        description: 'ID do arquivo jogo.zip no Google Drive (ou URL direta)'
+        description: 'ID do ficheiro jogo.zip no Google Drive (ou URL direta)'
         required: true
         type: string
       use_separate_romfs:
@@ -15,45 +15,59 @@ on:
 
 jobs:
   build_ipa:
-    # Roda em um Mac com chip Apple Silicon (M1/M2)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
 
     steps:
-      - name: 1. Liberar espaco em disco e checar arquitetura
+      - name: 1. Verificar sistema, espaco e selecionar Xcode mais recente
         run: |
           uname -m
+          sw_vers
           df -h
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
+          echo "Selecionando Xcode: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE"
+          xcodebuild -version
 
-      - name: 2. Instalar dependencias no Mac (Homebrew, .NET e Python)
+      - name: 2. Instalar dependencias no Mac
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           xcodebuild -downloadComponent MetalToolchain || true
-          brew install xcodegen zstd glslang
-          brew install --cask dotnet-sdk
-          python3 -m pip install --upgrade pip
-          python3 -m pip install lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
+          brew install xcodegen zstd glslang || true
+          brew install --cask dotnet-sdk || true
+          python3 -m pip install --break-system-packages --upgrade pip
+          python3 -m pip install --break-system-packages lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
 
       - name: 3. Clonar o repositorio oficial do nxnative
         run: |
           git clone https://github.com/seedds/nxnative.git
 
-      - name: 4. Recriar o arquivo prod.keys a partir dos Secrets
+      - name: 4. Recriar o ficheiro prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
           mkdir -p ~/keys
+          if [ -z "$KEYS_CONTENT" ]; then
+            echo "ERRO: O secret PROD_KEYS esta vazio nas configuracoes do repositorio!"
+            exit 1
+          fi
           echo "$KEYS_CONTENT" > ~/keys/prod.keys
 
-      - name: 5. Baixar e extrair o jogo (Google Drive ou Link Direto)
+      - name: 5. Transferir e extrair o jogo
         run: |
           mkdir -p ~/Games/TargetGame
-          if [[ "${{ inputs.gdrive_id }}" == http* ]]; then
-            curl -L "${{ inputs.gdrive_id }}" -o ~/jogo.zip
+          INPUT="${{ inputs.gdrive_id }}"
+          if [[ "$INPUT" == *"drive.google.com"* ]] || [[ "$INPUT" != http* ]]; then
+            python3 -m gdown --fuzzy "$INPUT" -O ~/jogo.zip
           else
-            python3 -m gdown "${{ inputs.gdrive_id }}" -O ~/jogo.zip
+            curl -L "$INPUT" -o ~/jogo.zip
           fi
-          unzip ~/jogo.zip -d ~/Games/TargetGame/
+          ls -lh ~/jogo.zip
+          unzip -q ~/jogo.zip -d ~/Games/TargetGame/
           rm ~/jogo.zip
+          find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
           ls -la ~/Games/TargetGame/
 
       - name: 6. Compilar o NSP para IPA
@@ -65,7 +79,7 @@ jobs:
           fi
           python3 scripts/build_ipa_from_nsp.py ~/Games/TargetGame -k ~/keys/prod.keys $EXTRA_ARGS
 
-      - name: 7. Salvar o IPA pronto para Download
+      - name: 7. Guardar o IPA pronto para Download
         uses: actions/upload-artifact@v4
         with:
           name: Jogo-Switch-iOS-IPA
