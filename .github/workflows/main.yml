@@ -22,7 +22,7 @@ env:
 jobs:
   build_ipa:
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: 1. Verificar sistema e selecionar Xcode mais recente
@@ -35,16 +35,19 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
-      - name: 2. Configurar Mac e Python (Corrigido)
+      - name: 2. Configurar Mac e Python
         run: |
           xcodebuild -downloadComponent MetalToolchain || true
           brew install xcodegen zstd glslang sevenzip || true
           brew install --cask dotnet-sdk || true
           python3 -m pip install --break-system-packages --ignore-installed lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
 
-      - name: 3. Clonar o repositorio oficial do nxnative
+      - name: 3. Clonar nxnative e aplicar patch para Xcode do GitHub
         run: |
           git clone https://github.com/seedds/nxnative.git
+          # Corrige incompatibilidade da propriedade deviceMotionBody em SDKs anteriores ao Xcode 27
+          sed -i '' 's/.*deviceMotionBody.*/\/\/ &/' nxnative/dm/ios/Sources/DmGamepad.m
+          grep -n "deviceMotionBody" nxnative/dm/ios/Sources/DmGamepad.m || true
 
       - name: 4. Recriar o ficheiro prod.keys
         env:
