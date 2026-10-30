@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       gdrive_id:
-        description: 'ID do arquivo no Google Drive (ou URL direta)'
+        description: 'ID do ficheiro no Google Drive (ou URL direta)'
         required: true
         type: string
       use_separate_romfs:
@@ -17,6 +17,7 @@ env:
   PIP_BREAK_SYSTEM_PACKAGES: 1
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
+  ALLOW_OTHER_METAL: "True"
 
 jobs:
   build_ipa:
@@ -45,7 +46,7 @@ jobs:
         run: |
           git clone https://github.com/seedds/nxnative.git
 
-      - name: 4. Recriar o arquivo prod.keys
+      - name: 4. Recriar o ficheiro prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
@@ -61,7 +62,6 @@ jobs:
           mkdir -p ~/Games/TargetGame
           INPUT="${{ inputs.gdrive_id }}"
           
-          # Se for link completo do Google Drive, extrai apenas o ID automaticamente
           if [[ "$INPUT" == *"drive.google.com"* ]]; then
             FILE_ID=$(echo "$INPUT" | sed -n 's/.*\/d\/\([a-zA-Z0-9_-]*\).*/\1/p')
             if [ -z "$FILE_ID" ]; then
@@ -76,15 +76,14 @@ jobs:
           
           ls -lh "$HOME/pacote_jogo"
           FILE_TYPE=$(file -b "$HOME/pacote_jogo")
-          echo "Tipo de arquivo baixado: $FILE_TYPE"
+          echo "Tipo de ficheiro transferido: $FILE_TYPE"
           
           if [[ "$FILE_TYPE" == *"HTML"* ]] || [[ "$FILE_TYPE" == *"text"* ]]; then
-            echo "ERRO: O Google Drive bloqueou o download e entregou uma pagina HTML em vez do jogo. Verifique se o compartilhamento esta como 'Qualquer pessoa com o link'."
+            echo "ERRO: O Google Drive bloqueou a transferencia e entregou uma pagina HTML em vez do jogo."
             exit 1
           fi
 
-          # Extrai caso seja .zip, .7z ou .rar, ou move direto se ja for .nsp/.xci
-          7z x "$HOME/pacote_jogo" -o"$HOME/Games/TargetGame/" -y || mv "$HOME/pacote_jogo" "$HOME/Games/TargetGame/jogo.nsp"
+          7z x "$HOME/pacote_jogo" -o"$HOME/Games/TargetGame/" -y || mv "$HOME/pacote_jogo" "$HOME/Games/TargetGame/jogo.xci"
           rm -f "$HOME/pacote_jogo"
           
           find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
@@ -93,9 +92,9 @@ jobs:
       - name: 6. Compilar o NSP para IPA
         run: |
           cd nxnative
-          EXTRA_ARGS=""
+          EXTRA_ARGS="--allow-other-metal"
           if [ "${{ inputs.use_separate_romfs }}" = "true" ]; then
-            EXTRA_ARGS="--romfs separate"
+            EXTRA_ARGS="$EXTRA_ARGS --romfs separate"
           fi
           python3 scripts/build_ipa_from_nsp.py ~/Games/TargetGame -k ~/keys/prod.keys $EXTRA_ARGS
 
