@@ -60,24 +60,32 @@ jobs:
         run: |
           mkdir -p ~/Games/TargetGame
           INPUT="${{ inputs.gdrive_id }}"
-          if [[ "$INPUT" == *"drive.google.com"* ]] || [[ "$INPUT" != http* ]]; then
-            python3 -m gdown --fuzzy "$INPUT" -O ~/ pacote_jogo
+          
+          # Se for link completo do Google Drive, extrai apenas o ID automaticamente
+          if [[ "$INPUT" == *"drive.google.com"* ]]; then
+            FILE_ID=$(echo "$INPUT" | sed -n 's/.*\/d\/\([a-zA-Z0-9_-]*\).*/\1/p')
+            if [ -z "$FILE_ID" ]; then
+              FILE_ID=$(echo "$INPUT" | sed -n 's/.*id=\([a-zA-Z0-9_-]*\).*/\1/p')
+            fi
+            python3 -m gdown "$FILE_ID" -O "$HOME/pacote_jogo"
+          elif [[ "$INPUT" != http* ]]; then
+            python3 -m gdown "$INPUT" -O "$HOME/pacote_jogo"
           else
-            curl -L "$INPUT" -o ~/pacote_jogo
+            curl -L "$INPUT" -o "$HOME/pacote_jogo"
           fi
           
-          ls -lh ~/pacote_jogo
-          FILE_TYPE=$(file -b ~/pacote_jogo)
+          ls -lh "$HOME/pacote_jogo"
+          FILE_TYPE=$(file -b "$HOME/pacote_jogo")
           echo "Tipo de arquivo baixado: $FILE_TYPE"
           
           if [[ "$FILE_TYPE" == *"HTML"* ]] || [[ "$FILE_TYPE" == *"text"* ]]; then
-            echo "ERRO: O Google Drive bloqueou o download e entregou uma pagina HTML em vez do jogo. Verifique se o compartilhamento do arquivo esta como 'Qualquer pessoa com o link' ou suba o arquivo no Gofile.io / Pixeldrain."
+            echo "ERRO: O Google Drive bloqueou o download e entregou uma pagina HTML em vez do jogo. Verifique se o compartilhamento esta como 'Qualquer pessoa com o link'."
             exit 1
           fi
 
           # Extrai caso seja .zip, .7z ou .rar, ou move direto se ja for .nsp/.xci
-          7z x ~/pacote_jogo -o"$HOME/Games/TargetGame/" -y || mv ~/pacote_jogo ~/Games/TargetGame/jogo.nsp
-          rm -f ~/pacote_jogo
+          7z x "$HOME/pacote_jogo" -o"$HOME/Games/TargetGame/" -y || mv "$HOME/pacote_jogo" "$HOME/Games/TargetGame/jogo.nsp"
+          rm -f "$HOME/pacote_jogo"
           
           find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
           ls -la ~/Games/TargetGame/
