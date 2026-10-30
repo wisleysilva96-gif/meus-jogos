@@ -13,13 +13,18 @@ on:
         default: false
         type: boolean
 
+env:
+  PIP_BREAK_SYSTEM_PACKAGES: 1
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
 jobs:
   build_ipa:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 120
 
     steps:
-      - name: 1. Verificar sistema, espaco e selecionar Xcode mais recente
+      - name: 1. Verificar sistema e selecionar Xcode mais recente
         run: |
           uname -m
           sw_vers
@@ -29,11 +34,9 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
-      - name: 2. Instalar dependencias no Mac
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
+      - name: 2. Configurar Mac e Python (Sem bloqueio PEP 668)
         run: |
+          python3 -m pip config set global.break-system-packages true || true
           xcodebuild -downloadComponent MetalToolchain || true
           brew install xcodegen zstd glslang || true
           brew install --cask dotnet-sdk || true
