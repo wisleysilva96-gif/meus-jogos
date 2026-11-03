@@ -106,6 +106,6 @@ jobs:
         with:
           name: Jogo-Switch-iOS-IPA
           path: |
-            ~/Games/TargetGame/*.ipa
-            ~/Games/TargetGame/*.img
+            ~/Games/TargetGame/**/*.ipa
+            ~/Games/TargetGame/**/*.img
           retention-days: 5
