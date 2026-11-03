@@ -1,16 +1,16 @@
-name: Compilar Jogo NXNative (macOS ARM64)
+name: Compilar Jogo NXNative Completo (macOS ARM64)
 
 on:
   workflow_dispatch:
     inputs:
       gdrive_id:
-        description: 'ID do ficheiro no Google Drive (ou URL direta)'
+        description: 'ID do arquivo no Google Drive (ou URL direta)'
         required: true
         type: string
       use_separate_romfs:
-        description: 'Separar RomFS? (Marque para jogos maiores que 4GB)'
+        description: 'Separar RomFS? (Deixe marcado para jogos maiores que 4GB)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
@@ -25,74 +25,53 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: 1. Verificar sistema e selecionar Xcode mais recente
+      - name: 1. Selecionar Xcode mais recente
         run: |
-          uname -m
-          sw_vers
-          df -h
           LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
-          echo "Selecionando Xcode: $LATEST_XCODE"
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
-      - name: 2. Configurar Mac e Python
+      - name: 2. Instalar dependencias no Mac
         run: |
           xcodebuild -downloadComponent MetalToolchain || true
           brew install xcodegen zstd glslang sevenzip || true
           brew install --cask dotnet-sdk || true
           python3 -m pip install --break-system-packages --ignore-installed lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
 
-      - name: 3. Clonar nxnative e aplicar patch para Xcode do GitHub
+      - name: 3. Clonar nxnative e aplicar patches de SDK
         run: |
           git clone https://github.com/seedds/nxnative.git
-          # Corrige incompatibilidade da propriedade deviceMotionBody em SDKs anteriores ao Xcode 27
           sed -i '' 's/.*deviceMotionBody.*/\/\/ &/' nxnative/dm/ios/Sources/DmGamepad.m
-          grep -n "deviceMotionBody" nxnative/dm/ios/Sources/DmGamepad.m || true
+          sed -i '' 's/.*colorContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
+          sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
+          sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
+          sed -i '' 's/.*outputOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
 
-      - name: 4. Recriar o ficheiro prod.keys
+      - name: 4. Recriar o arquivo prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
           mkdir -p ~/keys
-          if [ -z "$KEYS_CONTENT" ]; then
-            echo "ERRO: O secret PROD_KEYS esta vazio nas configuracoes do repositorio!"
-            exit 1
-          fi
           echo "$KEYS_CONTENT" > ~/keys/prod.keys
 
       - name: 5. Transferir e extrair o jogo
         run: |
           mkdir -p ~/Games/TargetGame
           INPUT="${{ inputs.gdrive_id }}"
-          
           if [[ "$INPUT" == *"drive.google.com"* ]]; then
             FILE_ID=$(echo "$INPUT" | sed -n 's/.*\/d\/\([a-zA-Z0-9_-]*\).*/\1/p')
-            if [ -z "$FILE_ID" ]; then
-              FILE_ID=$(echo "$INPUT" | sed -n 's/.*id=\([a-zA-Z0-9_-]*\).*/\1/p')
-            fi
+            [ -z "$FILE_ID" ] && FILE_ID=$(echo "$INPUT" | sed -n 's/.*id=\([a-zA-Z0-9_-]*\).*/\1/p')
             python3 -m gdown "$FILE_ID" -O "$HOME/pacote_jogo"
           elif [[ "$INPUT" != http* ]]; then
             python3 -m gdown "$INPUT" -O "$HOME/pacote_jogo"
           else
             curl -L "$INPUT" -o "$HOME/pacote_jogo"
           fi
-          
-          ls -lh "$HOME/pacote_jogo"
-          FILE_TYPE=$(file -b "$HOME/pacote_jogo")
-          echo "Tipo de ficheiro transferido: $FILE_TYPE"
-          
-          if [[ "$FILE_TYPE" == *"HTML"* ]] || [[ "$FILE_TYPE" == *"text"* ]]; then
-            echo "ERRO: O Google Drive bloqueou a transferencia e entregou uma pagina HTML em vez do jogo."
-            exit 1
-          fi
-
           7z x "$HOME/pacote_jogo" -o"$HOME/Games/TargetGame/" -y || mv "$HOME/pacote_jogo" "$HOME/Games/TargetGame/jogo.xci"
           rm -f "$HOME/pacote_jogo"
-          
           find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
-          ls -la ~/Games/TargetGame/
 
-      - name: 6. Compilar o NSP para IPA
+      - name: 6. Compilar o jogo (IPA + RomFS.img)
         run: |
           cd nxnative
           EXTRA_ARGS="--allow-other-metal"
@@ -100,12 +79,13 @@ jobs:
             EXTRA_ARGS="$EXTRA_ARGS --romfs separate"
           fi
           python3 scripts/build_ipa_from_nsp.py ~/Games/TargetGame -k ~/keys/prod.keys $EXTRA_ARGS
+          mkdir -p ~/OutputFinal
+          find ~/Games/TargetGame/ -type f \( -name "*.ipa" -o -name "*.img" \) -exec mv {} ~/OutputFinal/ \;
+          ls -lh ~/OutputFinal/
 
-      - name: 7. Guardar o IPA pronto para Download
+      - name: 7. Guardar IPA e RomFS.img para Download
         uses: actions/upload-artifact@v4
         with:
-          name: Jogo-Switch-iOS-IPA
-          path: |
-            ~/Games/TargetGame/**/*.ipa
-            ~/Games/TargetGame/**/*.img
+          name: Jogo-Switch-Completo
+          path: ~/OutputFinal/*
           retention-days: 5
