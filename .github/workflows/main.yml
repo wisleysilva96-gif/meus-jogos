@@ -34,9 +34,11 @@ jobs:
       - name: 2. Instalar dependencias no Mac
         run: |
           xcodebuild -downloadComponent MetalToolchain || true
-          brew install xcodegen zstd glslang sevenzip || true
+          brew install xcodegen zstd glslang sevenzip python@3.15 || true
           brew install --cask dotnet-sdk || true
-          python3 -m pip install --break-system-packages --ignore-installed lz4 capstone fonttools nsz gdown "backports.zstd; python_version < '3.14'"
+          # Força a instalação usando explicitamente o Python 3.15 do Homebrew com o zbic incluído
+          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install --upgrade pip --break-system-packages
+          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install --break-system-packages --ignore-installed lz4 "capstone>=5,<6" fonttools nsz gdown zbic pycryptodome
 
       - name: 3. Clonar nxnative e aplicar patches de SDK
         run: |
@@ -61,9 +63,9 @@ jobs:
           if [[ "$INPUT" == *"drive.google.com"* ]]; then
             FILE_ID=$(echo "$INPUT" | sed -n 's/.*\/d\/\([a-zA-Z0-9_-]*\).*/\1/p')
             [ -z "$FILE_ID" ] && FILE_ID=$(echo "$INPUT" | sed -n 's/.*id=\([a-zA-Z0-9_-]*\).*/\1/p')
-            python3 -m gdown "$FILE_ID" -O "$HOME/pacote_jogo"
+            /opt/homebrew/opt/python@3.15/bin/python3.15 -m gdown "$FILE_ID" -O "$HOME/pacote_jogo"
           elif [[ "$INPUT" != http* ]]; then
-            python3 -m gdown "$INPUT" -O "$HOME/pacote_jogo"
+            /opt/homebrew/opt/python@3.15/bin/python3.15 -m gdown "$INPUT" -O "$HOME/pacote_jogo"
           else
             curl -L "$INPUT" -o "$HOME/pacote_jogo"
           fi
@@ -74,11 +76,19 @@ jobs:
       - name: 6. Compilar o jogo (IPA + RomFS.img)
         run: |
           cd nxnative
-          # Instala as dependências faltando no Python 3.15 do Homebrew
+          # Garante que o zbic e dependências estão presentes no Python 3.15
           /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install lz4 "capstone>=5,<6" fonttools zbic --break-system-packages
           
-          # Comando de execução da compilação (ajuste o script principal caso o seu utilize outro nome, ex: main.py, build.py, etc.)
-          /opt/homebrew/opt/python@3.15/bin/python3.15 main.py
+          # Localiza automaticamente o script python de build/empacotamento na pasta clonada
+          SCRIPT_FILE=$(find . -maxdepth 2 -name "*.py" | grep -E "build|pack|cli|main" | head -n 1)
+          if [ -z "$SCRIPT_FILE" ]; then
+            SCRIPT_FILE="main.py"
+          fi
+          echo "Utilizando script de compilação: $SCRIPT_FILE"
+          
+          # Executa o script apontando para a pasta do jogo e diretório de saída
+          mkdir -p ~/OutputFinal
+          /opt/homebrew/opt/python@3.15/bin/python3.15 "$SCRIPT_FILE" ~/Games/TargetGame -o ~/OutputFinal/JogoFinal.ipa
 
       - name: 7. Guardar IPA e RomFS.img para Download
         uses: actions/upload-artifact@v4
