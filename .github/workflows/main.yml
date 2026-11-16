@@ -71,19 +71,22 @@ jobs:
           rm -f "$HOME/pacote_jogo"
           find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
 
+      
       - name: 6. Compilar o jogo (IPA + RomFS.img)
         run: |
           cd nxnative
           /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install lz4 "capstone>=5,<6" fonttools zbic --break-system-packages
-          
+
           SCRIPT_FILE=$(find . -maxdepth 3 -name "build_ipa_from_nsp.py" | head -n 1)
           echo "Utilizando script: $SCRIPT_FILE"
-          
+
           mkdir -p ~/OutputFinal
           /opt/homebrew/opt/python@3.15/bin/python3.15 "$SCRIPT_FILE" \
             ~/Games/TargetGame \
             -k ~/keys/prod.keys \
-            -o ~/OutputFinal/JogoFinal.ipa
+            -o ~/OutputFinal/JogoFinal.ipa \
+            --allow-other-metal
+
 
       - name: 7. Guardar IPA e RomFS.img para Download
         uses: actions/upload-artifact@v4
