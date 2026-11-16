@@ -46,6 +46,37 @@ jobs:
           sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
           sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
           sed -i '' 's/.*outputOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
+          
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("nxnative/dm/gfx/nvn/nvn_mtl.m")
+          s = p.read_text()
+
+          replacements = [
+              (
+                  'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // the name before 27, and the only one those systems have\n        else u = sc.reactiveTextureUsage;\n#pragma clang diagnostic pop',
+                  'u = sc.reactiveTextureUsage;'
+              ),
+              (
+                  'sc.exposureTexture = expo; sc.reactiveMaskTexture = bias;',
+                  'sc.exposureTexture = expo;'
+              ),
+              (
+                  'if (bias) { sc.reactiveMaskContentOffsetX = (NSUInteger)a.base[DLSS_BIAS][0]; sc.reactiveMaskContentOffsetY = (NSUInteger)a.base[DLSS_BIAS][1]; }',
+                  ''
+              )
+          ]
+
+          for old, new in replacements:
+              if s.count(old) != 1:
+                  raise SystemExit("ERRO: trecho esperado não encontrado exatamente uma vez: " + old[:80])
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          print("Patches de compatibilidade MetalFX aplicados.")
+          PY
+
 
       - name: 4. Recriar o arquivo prod.keys
         env:
