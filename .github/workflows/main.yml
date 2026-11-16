@@ -36,8 +36,7 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain || true
           brew install xcodegen zstd glslang sevenzip python@3.15 || true
           brew install --cask dotnet-sdk || true
-          # Força a instalação usando explicitamente o Python 3.15 do Homebrew com o zbic incluído
-          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install --upgrade pip --break-system-packages
+          # Instala diretamente as dependências no Python 3.15 sem tentar atualizar o pip do sistema
           /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install --break-system-packages --ignore-installed lz4 "capstone>=5,<6" fonttools nsz gdown zbic pycryptodome
 
       - name: 3. Clonar nxnative e aplicar patches de SDK
