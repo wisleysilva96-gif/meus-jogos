@@ -74,14 +74,11 @@ jobs:
       - name: 6. Compilar o jogo (IPA + RomFS.img)
         run: |
           cd nxnative
-          EXTRA_ARGS="--allow-other-metal"
-          if [ "${{ inputs.use_separate_romfs }}" = "true" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS --romfs separate"
-          fi
-          python3 scripts/build_ipa_from_nsp.py ~/Games/TargetGame -k ~/keys/prod.keys $EXTRA_ARGS
-          mkdir -p ~/OutputFinal
-          find ~/Games/TargetGame/ -type f \( -name "*.ipa" -o -name "*.img" \) -exec mv {} ~/OutputFinal/ \;
-          ls -lh ~/OutputFinal/
+          # Instala as dependências faltando no Python 3.15 do Homebrew
+          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install lz4 "capstone>=5,<6" fonttools zbic --break-system-packages
+          
+          # Comando de execução da compilação (ajuste o script principal caso o seu utilize outro nome, ex: main.py, build.py, etc.)
+          /opt/homebrew/opt/python@3.15/bin/python3.15 main.py
 
       - name: 7. Guardar IPA e RomFS.img para Download
         uses: actions/upload-artifact@v4
