@@ -147,4 +147,90 @@ jobs:
 
           mkdir -p "$TARGET_DIR"
 
-          if [ -z
+          if [ -z "${GAME_SOURCE:-}" ]; then
+            echo "::error::O ID ou URL esta vazio."
+            exit 1
+          fi
+
+          case "$GAME_SOURCE" in
+            *drive.google.com*)
+              FILE_ID=$(echo "$GAME_SOURCE" | sed -n 's#.*\/d\/\([A-Za-z0-9_-]*\).*#\1#p')
+
+              if [ -z "$FILE_ID" ]; then
+                FILE_ID=$(echo "$GAME_SOURCE" | sed -n 's#.*[?&]id=\([A-Za-z0-9_-]*\).*#\1#p')
+              fi
+
+              if [ -z "$FILE_ID" ]; then
+                echo "::error::Nao foi possivel extrair o ID do Google Drive."
+                exit 1
+              fi
+
+              echo "Baixando pelo Google Drive..."
+              python3 -m gdown "$FILE_ID" -O "$DOWNLOAD_FILE"
+              ;;
+
+            http://*|https://*)
+              echo "Baixando por URL direta..."
+              curl \
+                --fail \
+                --location \
+                --retry 5 \
+                --retry-delay 10 \
+                --connect-timeout 30 \
+                --output "$DOWNLOAD_FILE" \
+                "$GAME_SOURCE"
+              ;;
+
+            *)
+              echo "Baixando pelo ID do Google Drive..."
+              python3 -m gdown "$GAME_SOURCE" -O "$DOWNLOAD_FILE"
+              ;;
+          esac
+
+          if [ ! -s "$DOWNLOAD_FILE" ]; then
+            echo "::error::O download nao criou um arquivo valido."
+            exit 1
+          fi
+
+          FILE_SIZE=$(stat -f '%z' "$DOWNLOAD_FILE")
+          FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
+
+          echo "Tamanho: $FILE_SIZE bytes"
+          echo "Tipo: $FILE_TYPE"
+          ls -lh "$DOWNLOAD_FILE"
+
+          if [ "$FILE_SIZE" -lt 100000 ]; then
+            echo "::error::O arquivo baixado possui menos de 100 KB."
+            exit 1
+          fi
+
+          if echo "$FILE_TYPE" | grep -qiE 'HTML|XML|text'; then
+            echo "::error::O download retornou HTML ou texto."
+            exit 1
+          fi
+
+          if echo "$FILE_TYPE" | grep -qiE 'archive|zip|7-zip|rar|tar|gzip|bzip2|xz|zstandard'; then
+            echo "Extraindo arquivo..."
+            7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
+          else
+            echo "Movendo arquivo como XCI..."
+            mv "$DOWNLOAD_FILE" "$TARGET_DIR/jogo.xci"
+          fi
+
+          find "$TARGET_DIR" -mindepth 2 -type f \
+            \( -iname "*.nsp" -o -iname "*.xci" -o -iname "*.nsz" -o -iname "*.xcz" -o -iname "*.nup" \) \
+            -exec mv -n {} "$TARGET_DIR/" \;
+
+          echo "Arquivos encontrados:"
+          find "$TARGET_DIR" -maxdepth 2 -type f -print
+
+          PACKAGE_COUNT=$(find "$TARGET_DIR" -type f \
+            \( -iname "*.nsp" -o -iname "*.xci" -o -iname "*.nsz" -o -iname "*.xcz" -o -iname "*.nup" \) \
+            | wc -l | tr -d ' ')
+
+          if [ "$PACKAGE_COUNT" -eq 0 ]; then
+            echo "::error::Nenhum pacote de jogo foi encontrado."
+            exit 1
+          fi
+
+          echo "Pacotes encontrados: $PACKAGE_COUNT"
