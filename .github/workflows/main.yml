@@ -153,7 +153,7 @@ jobs:
 
           echo "prod.keys recriado."
 
-      - name: 5. Baixar e preparar o jogo
+           - name: 5. Baixar e preparar o jogo
         env:
           GAME_SOURCE: ${{ inputs.gdrive_id }}
         run: |
@@ -170,19 +170,32 @@ jobs:
           fi
 
           if [[ "$GAME_SOURCE" == *"drive.google.com"* ]]; then
-            echo "Baixando URL do Google Drive..."
+            echo "Extraindo ID da URL do Google Drive..."
+
+            FILE_ID=$(printf '%s' "$GAME_SOURCE" |
+              sed -n 's#.*\/d\/\([A-Za-z0-9_-]*\).*#\1#p')
+
+            if [ -z "$FILE_ID" ]; then
+              FILE_ID=$(printf '%s' "$GAME_SOURCE" |
+                sed -n 's#.*[?&]id=\([A-Za-z0-9_-]*\).*#\1#p')
+            fi
+
+            if [ -z "$FILE_ID" ]; then
+              echo "::error::Nao foi possivel extrair o ID da URL do Google Drive."
+              exit 1
+            fi
+
+            echo "Baixando arquivo do Google Drive..."
 
             python3 -m gdown \
-              --fuzzy \
-              "$GAME_SOURCE" \
+              "$FILE_ID" \
               --output "$DOWNLOAD_FILE"
 
           elif [[ "$GAME_SOURCE" != http://* && "$GAME_SOURCE" != https://* ]]; then
             echo "Baixando pelo ID do Google Drive..."
 
             python3 -m gdown \
-              "https://drive.google.com/uc?id=${GAME_SOURCE}" \
-              --fuzzy \
+              "$GAME_SOURCE" \
               --output "$DOWNLOAD_FILE"
 
           else
@@ -249,15 +262,16 @@ jobs:
                 -iname "*.nsz" -o \
                 -iname "*.xcz" -o \
                 -iname "*.nup" \
-              \) | wc -l | tr -d ' '
+              \) | wc -l |*tr -d ' '
           )
 
-          if [ "$PACKAGE_COUNT" -eq 0 ]; then
-            echo "::error::Nenhum NSP, XCI, NSZ, XCZ ou NUP foi encontrado."
+          i* [ "$PACKAGE_COUNT" -eq 0 ]; then
+*           echo "::error::Nenhum N*P, XCI, NSZ, XCZ ou NUP foi encont*ado."
             exit 1
-          fi
+         *fi
 
-          echo "Total de pacotes encontrados: $PACKAGE_COUNT"
+          echo "Total de pacot*s encontrados: $PACKAGE_COUNT"
+```*
 
       - name: 6. Compilar IPA
         env:
