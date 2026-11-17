@@ -7,7 +7,6 @@ on:
         description: "ID do arquivo no Google Drive ou URL direta"
         required: true
         type: string
-
       use_separate_romfs:
         description: "Separar RomFS?"
         required: false
@@ -29,20 +28,10 @@ jobs:
       - name: 1. Verificar ambiente
         run: |
           set -euo pipefail
-
-          echo "Arquitetura:"
           uname -m
-
-          echo "macOS:"
           sw_vers
-
-          echo "Xcode:"
           xcodebuild -version
-
-          echo "Python:"
           python3 --version
-
-          echo "Espaco disponivel:"
           df -h /
 
       - name: 2. Instalar dependencias
@@ -50,7 +39,6 @@ jobs:
           set -euo pipefail
 
           xcodebuild -downloadComponent MetalToolchain || true
-
           brew install xcodegen zstd glslang sevenzip
 
           python3 -m pip install \
@@ -60,13 +48,13 @@ jobs:
             "capstone>=5,<6" \
             fonttools \
             nsz \
-            gdown \
+            "gdown>=5.2.0" \
             zbic \
             pycryptodome \
             "backports.zstd; python_version < '3.14'"
 
-          echo "Dependencias Python instaladas:"
-          python3 -m pip show gdown lz4 capstone fonttools nsz zbic
+          python3 -m pip show gdown
+          python3 -m gdown --version
 
       - name: 3. Clonar nxnative e aplicar patches
         run: |
@@ -116,13 +104,13 @@ jobs:
               count = content.count(old)
 
               if count == 0:
-                  print("AVISO: patch nao encontrado, provavelmente o codigo mudou:")
+                  print("AVISO: patch nao encontrado:")
                   print(old[:100])
                   continue
 
               if count > 1:
                   raise SystemExit(
-                      f"ERRO: trecho de patch encontrado {count} vezes: {old[:100]}"
+                      f"ERRO: trecho encontrado {count} vezes: {old[:100]}"
                   )
 
               content = content.replace(old, new, 1)
@@ -138,7 +126,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${KEYS_CONTENT:-}" ]; then
-            echo "::error::O secret PROD_KEYS esta vazio ou nao foi configurado."
+            echo "::error::O secret PROD_KEYS esta vazio."
             exit 1
           fi
 
@@ -146,14 +134,9 @@ jobs:
           printf '%s\n' "$KEYS_CONTENT" > "$HOME/keys/prod.keys"
           chmod 600 "$HOME/keys/prod.keys"
 
-          if [ ! -s "$HOME/keys/prod.keys" ]; then
-            echo "::error::O arquivo prod.keys ficou vazio."
-            exit 1
-          fi
+          test -s "$HOME/keys/prod.keys"
 
-          echo "prod.keys recriado."
-
-           - name: 5. Baixar e preparar o jogo
+      - name: 5. Baixar e preparar o jogo
         env:
           GAME_SOURCE: ${{ inputs.gdrive_id }}
         run: |
@@ -164,168 +147,4 @@ jobs:
 
           mkdir -p "$TARGET_DIR"
 
-          if [ -z "${GAME_SOURCE:-}" ]; then
-            echo "::error::O ID ou URL do jogo esta vazio."
-            exit 1
-          fi
-
-          if [[ "$GAME_SOURCE" == *"drive.google.com"* ]]; then
-            echo "Extraindo ID da URL do Google Drive..."
-
-            FILE_ID=$(printf '%s' "$GAME_SOURCE" |
-              sed -n 's#.*\/d\/\([A-Za-z0-9_-]*\).*#\1#p')
-
-            if [ -z "$FILE_ID" ]; then
-              FILE_ID=$(printf '%s' "$GAME_SOURCE" |
-                sed -n 's#.*[?&]id=\([A-Za-z0-9_-]*\).*#\1#p')
-            fi
-
-            if [ -z "$FILE_ID" ]; then
-              echo "::error::Nao foi possivel extrair o ID da URL do Google Drive."
-              exit 1
-            fi
-
-            echo "Baixando arquivo do Google Drive..."
-
-            python3 -m gdown \
-              "$FILE_ID" \
-              --output "$DOWNLOAD_FILE"
-
-          elif [[ "$GAME_SOURCE" != http://* && "$GAME_SOURCE" != https://* ]]; then
-            echo "Baixando pelo ID do Google Drive..."
-
-            python3 -m gdown \
-              "$GAME_SOURCE" \
-              --output "$DOWNLOAD_FILE"
-
-          else
-            echo "Baixando URL direta..."
-
-            curl \
-              --fail \
-              --location \
-              --retry 5 \
-              --retry-delay 10 \
-              --connect-timeout 30 \
-              --output "$DOWNLOAD_FILE" \
-              "$GAME_SOURCE"
-          fi
-
-          if [ ! -s "$DOWNLOAD_FILE" ]; then
-            echo "::error::O download nao criou um arquivo valido."
-            exit 1
-          fi
-
-          echo "Arquivo baixado:"
-          ls -lh "$DOWNLOAD_FILE"
-
-          FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
-          echo "Tipo detectado: $FILE_TYPE"
-
-          if echo "$FILE_TYPE" | grep -qiE \
-            'archive|zip|7-zip|rar|tar|gzip|bzip2|xz|zstandard'; then
-
-            echo "Extraindo pacote..."
-            7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
-          else
-            echo "Arquivo nao parece ser compactado."
-
-            case "${GAME_SOURCE,,}" in
-              *.nsp*) EXT="nsp" ;;
-              *.nsz*) EXT="nsz" ;;
-              *.xcz*) EXT="xcz" ;;
-              *.nup*) EXT="nup" ;;
-              *) EXT="xci" ;;
-            esac
-
-            mv "$DOWNLOAD_FILE" "$TARGET_DIR/jogo.$EXT"
-          fi
-
-          find "$TARGET_DIR" -mindepth 2 -type f \
-            \( \
-              -iname "*.nsp" -o \
-              -iname "*.xci" -o \
-              -iname "*.nsz" -o \
-              -iname "*.xcz" -o \
-              -iname "*.nup" \
-            \) \
-            -exec mv -n {} "$TARGET_DIR/" \;
-
-          echo "Arquivos encontrados:"
-          find "$TARGET_DIR" -maxdepth 2 -type f -print
-
-          PACKAGE_COUNT=$(
-            find "$TARGET_DIR" -type f \
-              \( \
-                -iname "*.nsp" -o \
-                -iname "*.xci" -o \
-                -iname "*.nsz" -o \
-                -iname "*.xcz" -o \
-                -iname "*.nup" \
-              \) | wc -l |*tr -d ' '
-          )
-
-          i* [ "$PACKAGE_COUNT" -eq 0 ]; then
-*           echo "::error::Nenhum N*P, XCI, NSZ, XCZ ou NUP foi encont*ado."
-            exit 1
-         *fi
-
-          echo "Total de pacot*s encontrados: $PACKAGE_COUNT"
-```*
-
-      - name: 6. Compilar IPA
-        env:
-          USE_SEPARATE_ROMFS: ${{ inputs.use_separate_romfs }}
-        run: |
-          set -euo pipefail
-
-          cd nxnative
-
-          SCRIPT_FILE="scripts/build_ipa_from_nsp.py"
-
-          if [ ! -f "$SCRIPT_FILE" ]; then
-            echo "::error::Script $SCRIPT_FILE nao encontrado."
-            exit 1
-          fi
-
-          mkdir -p "$HOME/OutputFinal"
-
-          EXTRA_ARGS=()
-
-          if [ "$USE_SEPARATE_ROMFS" = "true" ]; then
-            EXTRA_ARGS+=(--romfs separate)
-          fi
-
-          echo "Utilizando script: $SCRIPT_FILE"
-          echo "RomFS separado: $USE_SEPARATE_ROMFS"
-
-          python3 "$SCRIPT_FILE" \
-            "$HOME/Games/TargetGame" \
-            -k "$HOME/keys/prod.keys" \
-            -o "$HOME/OutputFinal/JogoFinal.ipa" \
-            --allow-other-metal \
-            "${EXTRA_ARGS[@]}"
-
-          echo "Resultado da compilacao:"
-          find "$HOME/OutputFinal" -maxdepth 2 -type f -print
-          du -sh "$HOME/OutputFinal"
-
-      - name: 7. Preparar arquivos para artefato
-        if: always()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
-
-          if [ -d "$HOME/OutputFinal" ]; then
-            cp -R "$HOME/OutputFinal/." "$GITHUB_WORKSPACE/OutputFinal/" || true
-          fi
-
-          find "$GITHUB_WORKSPACE/OutputFinal" -maxdepth 2 -type f -print || true
-
-      - name: 8. Guardar IPA e RomFS
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Jogo-Switch-Completo
-          path: OutputFinal/
-          retention-days: 5
-          if-no-files-found: warn
+          if [ -z
