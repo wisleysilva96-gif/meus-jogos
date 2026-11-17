@@ -1,61 +1,102 @@
-name: Compilar Jogo NXNative Completo (macOS ARM64)
+name: Compilar Jogo NXNative Completo
 
 on:
   workflow_dispatch:
     inputs:
       gdrive_id:
-        description: 'ID do arquivo no Google Drive (ou URL direta)'
+        description: "ID do arquivo no Google Drive ou URL direta"
         required: true
         type: string
+
       use_separate_romfs:
-        description: 'Separar RomFS? (Deixe marcado para jogos maiores que 4GB)'
+        description: "Separar RomFS?"
         required: false
         default: true
         type: boolean
 
 env:
-  PIP_BREAK_SYSTEM_PACKAGES: 1
-  HOMEBREW_NO_AUTO_UPDATE: 1
-  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  PIP_BREAK_SYSTEM_PACKAGES: "1"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
   ALLOW_OTHER_METAL: "True"
 
 jobs:
   build_ipa:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 180
 
     steps:
-      - name: 1. Selecionar Xcode mais recente
+      - name: 1. Verificar ambiente
         run: |
-          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
-          sudo xcode-select -s "$LATEST_XCODE"
+          set -euo pipefail
+
+          echo "Arquitetura:"
+          uname -m
+
+          echo "macOS:"
+          sw_vers
+
+          echo "Xcode:"
           xcodebuild -version
 
-      - name: 2. Instalar dependencias no Mac
-        run: |
-          xcodebuild -downloadComponent MetalToolchain || true
-          brew install xcodegen zstd glslang sevenzip python@3.15 || true
-          brew install --cask dotnet-sdk || true
-          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install --break-system-packages --ignore-installed lz4 "capstone>=5,<6" fonttools nsz gdown zbic pycryptodome
+          echo "Python:"
+          python3 --version
 
-      - name: 3. Clonar nxnative e aplicar patches de SDK
+          echo "Espaco disponivel:"
+          df -h /
+
+      - name: 2. Instalar dependencias
         run: |
-          git clone https://github.com/seedds/nxnative.git
-          sed -i '' 's/.*deviceMotionBody.*/\/\/ &/' nxnative/dm/ios/Sources/DmGamepad.m
-          sed -i '' 's/.*colorContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
-          sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
-          sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
-          sed -i '' 's/.*outputOffsetX.*/\/\/ &/' nxnative/dm/gfx/nvn/nvn_mtl.m
-          
+          set -euo pipefail
+
+          xcodebuild -downloadComponent MetalToolchain || true
+
+          brew install xcodegen zstd glslang sevenzip
+
+          python3 -m pip install --upgrade pip
+
+          python3 -m pip install \
+            lz4 \
+            "capstone>=5,<6" \
+            fonttools \
+            nsz \
+            gdown \
+            zbic \
+            pycryptodome \
+            "backports.zstd; python_version < '3.14'"
+
+      - name: 3. Clonar nxnative e aplicar patches
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 https://github.com/seedds/nxnative.git
+          cd nxnative
+
+          METAL_FILE="dm/gfx/nvn/nvn_mtl.m"
+          GAMEPAD_FILE="dm/ios/Sources/DmGamepad.m"
+
+          test -f "$METAL_FILE"
+          test -f "$GAMEPAD_FILE"
+
+          sed -i '' 's/.*deviceMotionBody.*/\/\/ &/' "$GAMEPAD_FILE"
+          sed -i '' 's/.*colorContentOffsetX.*/\/\/ &/' "$METAL_FILE"
+          sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' "$METAL_FILE"
+          sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' "$METAL_FILE"
+          sed -i '' 's/.*outputOffsetX.*/\/\/ &/' "$METAL_FILE"
+
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("nxnative/dm/gfx/nvn/nvn_mtl.m")
-          s = p.read_text()
+          path = Path("dm/gfx/nvn/nvn_mtl.m")
+          content = path.read_text()
 
           replacements = [
               (
-                  'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // the name before 27, and the only one those systems have\n        else u = sc.reactiveTextureUsage;\n#pragma clang diagnostic pop',
+                  'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n'
+                  '#pragma clang diagnostic push\n'
+                  '#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // the name before 27, and the only one those systems have\n'
+                  '        else u = sc.reactiveTextureUsage;\n'
+                  '#pragma clang diagnostic pop',
                   'u = sc.reactiveTextureUsage;'
               ),
               (
@@ -69,59 +110,200 @@ jobs:
           ]
 
           for old, new in replacements:
-              if s.count(old) != 1:
-                  raise SystemExit("ERRO: trecho esperado não encontrado exatamente uma vez: " + old[:80])
-              s = s.replace(old, new, 1)
+              count = content.count(old)
 
-          p.write_text(s)
-          print("Patches de compatibilidade MetalFX aplicados.")
+              if count == 0:
+                  print("AVISO: patch nao encontrado, provavelmente o codigo mudou:")
+                  print(old[:100])
+                  continue
+
+              if count > 1:
+                  raise SystemExit(
+                      f"ERRO: trecho de patch encontrado {count} vezes: {old[:100]}"
+                  )
+
+              content = content.replace(old, new, 1)
+
+          path.write_text(content)
+          print("Patches processados.")
           PY
 
-
-      - name: 4. Recriar o arquivo prod.keys
+      - name: 4. Recriar prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
-          mkdir -p ~/keys
-          echo "$KEYS_CONTENT" > ~/keys/prod.keys
+          set -euo pipefail
 
-      - name: 5. Transferir e extrair o jogo
-        run: |
-          mkdir -p ~/Games/TargetGame
-          INPUT="${{ inputs.gdrive_id }}"
-          if [[ "$INPUT" == *"drive.google.com"* ]]; then
-            FILE_ID=$(echo "$INPUT" | sed -n 's/.*\/d\/\([a-zA-Z0-9_-]*\).*/\1/p')
-            [ -z "$FILE_ID" ] && FILE_ID=$(echo "$INPUT" | sed -n 's/.*id=\([a-zA-Z0-9_-]*\).*/\1/p')
-            /opt/homebrew/opt/python@3.15/bin/python3.15 -m gdown "$FILE_ID" -O "$HOME/pacote_jogo"
-          elif [[ "$INPUT" != http* ]]; then
-            /opt/homebrew/opt/python@3.15/bin/python3.15 -m gdown "$INPUT" -O "$HOME/pacote_jogo"
-          else
-            curl -L "$INPUT" -o "$HOME/pacote_jogo"
+          if [ -z "${KEYS_CONTENT:-}" ]; then
+            echo "::error::O secret PROD_KEYS esta vazio ou nao foi configurado."
+            exit 1
           fi
-          7z x "$HOME/pacote_jogo" -o"$HOME/Games/TargetGame/" -y || mv "$HOME/pacote_jogo" "$HOME/Games/TargetGame/jogo.xci"
-          rm -f "$HOME/pacote_jogo"
-          find ~/Games/TargetGame/ -mindepth 2 -type f \( -name "*.nsp" -o -name "*.xci" -o -name "*.nsz" -o -name "*.xcz" \) -exec mv {} ~/Games/TargetGame/ \;
 
-      
-      - name: 6. Compilar o jogo (IPA + RomFS.img)
+          mkdir -p "$HOME/keys"
+          printf '%s\n' "$KEYS_CONTENT" > "$HOME/keys/prod.keys"
+          chmod 600 "$HOME/keys/prod.keys"
+
+          if [ ! -s "$HOME/keys/prod.keys" ]; then
+            echo "::error::O arquivo prod.keys ficou vazio."
+            exit 1
+          fi
+
+          echo "prod.keys recriado."
+
+      - name: 5. Baixar e preparar o jogo
+        env:
+          GAME_SOURCE: ${{ inputs.gdrive_id }}
         run: |
+          set -euo pipefail
+
+          TARGET_DIR="$HOME/Games/TargetGame"
+          DOWNLOAD_FILE="$RUNNER_TEMP/pacote_jogo"
+
+          mkdir -p "$TARGET_DIR"
+
+          if [ -z "${GAME_SOURCE:-}" ]; then
+            echo "::error::O ID ou URL do jogo esta vazio."
+            exit 1
+          fi
+
+          if [[ "$GAME_SOURCE" == *"drive.google.com"* ]]; then
+            echo "Baixando URL do Google Drive..."
+            python3 -m gdown \
+              --fuzzy \
+              "$GAME_SOURCE" \
+              --output "$DOWNLOAD_FILE"
+          elif [[ "$GAME_SOURCE" != http://* && "$GAME_SOURCE" != https://* ]]; then
+            echo "Baixando pelo ID do Google Drive..."
+            python3 -m gdown \
+              "https://drive.google.com/uc?id=${GAME_SOURCE}" \
+              --fuzzy \
+              --output "$DOWNLOAD_FILE"
+          else
+            echo "Baixando URL direta..."
+            curl \
+              --fail \
+              --location \
+              --retry 5 \
+              --retry-delay 10 \
+              --connect-timeout 30 \
+              --output "$DOWNLOAD_FILE" \
+              "$GAME_SOURCE"
+          fi
+
+          if [ ! -s "$DOWNLOAD_FILE" ]; then
+            echo "::error::O download nao criou um arquivo valido."
+            exit 1
+          fi
+
+          echo "Arquivo baixado:"
+          ls -lh "$DOWNLOAD_FILE"
+
+          FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
+          echo "Tipo detectado: $FILE_TYPE"
+
+          if echo "$FILE_TYPE" | grep -qiE \
+            'archive|zip|7-zip|rar|tar|gzip|bzip2|xz|zstandard'; then
+
+            echo "Extraindo pacote..."
+            7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
+          else
+            echo "Arquivo nao parece ser compactado. Copiando para a pasta do jogo."
+
+            case "${GAME_SOURCE,,}" in
+              *.nsp*) EXT="nsp" ;;
+              *.nsz*) EXT="nsz" ;;
+              *.xcz*) EXT="xcz" ;;
+              *.nup*) EXT="nup" ;;
+              *)      EXT="xci" ;;
+            esac
+
+            mv "$DOWNLOAD_FILE" "$TARGET_DIR/jogo.$EXT"
+          fi
+
+          find "$TARGET_DIR" -mindepth 2 -type f \
+            \( \
+              -iname "*.nsp" -o \
+              -iname "*.xci" -o \
+              -iname "*.nsz" -o \
+              -iname "*.xcz" -o \
+              -iname "*.nup" \
+            \) \
+            -exec mv -n {} "$TARGET_DIR/" \;
+
+          echo "Arquivos encontrados:"
+          find "$TARGET_DIR" -maxdepth 2 -type f -print
+
+          PACKAGE_COUNT=$(
+            find "$TARGET_DIR" -type f \
+              \( \
+                -iname "*.nsp" -o \
+                -iname "*.xci" -o \
+                -iname "*.nsz" -o \
+                -iname "*.xcz" -o \
+                -iname "*.nup" \
+              \) | wc -l | tr -d ' '
+          )
+
+          if [ "$PACKAGE_COUNT" -eq 0 ]; then
+            echo "::error::Nenhum NSP, XCI, NSZ, XCZ ou NUP foi encontrado."
+            exit 1
+          fi
+
+          echo "Total de pacotes encontrados: $PACKAGE_COUNT"
+
+      - name: 6. Compilar IPA
+        env:
+          USE_SEPARATE_ROMFS: ${{ inputs.use_separate_romfs }}
+        run: |
+          set -euo pipefail
+
           cd nxnative
-          /opt/homebrew/opt/python@3.15/bin/python3.15 -m pip install lz4 "capstone>=5,<6" fonttools zbic --break-system-packages
 
-          SCRIPT_FILE=$(find . -maxdepth 3 -name "build_ipa_from_nsp.py" | head -n 1)
+          SCRIPT_FILE="scripts/build_ipa_from_nsp.py"
+
+          if [ ! -f "$SCRIPT_FILE" ]; then
+            echo "::error::Script $SCRIPT_FILE nao encontrado."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/OutputFinal"
+
+          EXTRA_ARGS=()
+
+          if [ "$USE_SEPARATE_ROMFS" = "true" ]; then
+            EXTRA_ARGS+=(--romfs separate)
+          fi
+
           echo "Utilizando script: $SCRIPT_FILE"
+          echo "RomFS separado: $USE_SEPARATE_ROMFS"
 
-          mkdir -p ~/OutputFinal
-          /opt/homebrew/opt/python@3.15/bin/python3.15 "$SCRIPT_FILE" \
-            ~/Games/TargetGame \
-            -k ~/keys/prod.keys \
-            -o ~/OutputFinal/JogoFinal.ipa \
-            --allow-other-metal
+          python3 "$SCRIPT_FILE" \
+            "$HOME/Games/TargetGame" \
+            -k "$HOME/keys/prod.keys" \
+            -o "$HOME/OutputFinal/JogoFinal.ipa" \
+            --allow-other-metal \
+            "${EXTRA_ARGS[@]}"
 
+          echo "Resultado da compilacao:"
+          find "$HOME/OutputFinal" -maxdepth 2 -type f -print
+          du -sh "$HOME/OutputFinal"
 
-      - name: 7. Guardar IPA e RomFS.img para Download
+      - name: 7. Preparar arquivos para artefato
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
+
+          if [ -d "$HOME/OutputFinal" ]; then
+            cp -R "$HOME/OutputFinal/." "$GITHUB_WORKSPACE/OutputFinal/" || true
+          fi
+
+          find "$GITHUB_WORKSPACE/OutputFinal" -maxdepth 2 -type f -print || true
+
+      - name: 8. Guardar IPA e RomFS
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Jogo-Switch-Completo
-          path: ~/OutputFinal/*
+          path: OutputFinal/
           retention-days: 5
+          if-no-files-found: warn
