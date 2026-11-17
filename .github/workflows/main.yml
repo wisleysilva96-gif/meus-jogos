@@ -45,7 +45,7 @@ jobs:
           echo "Espaco disponivel:"
           df -h /
 
-           - name: 2. Instalar dependencias
+                 - name: 2. Instalar dependencias
         run: |
           set -euo pipefail
 
