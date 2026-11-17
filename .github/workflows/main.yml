@@ -45,7 +45,7 @@ jobs:
           echo "Espaco disponivel:"
           df -h /
 
-                 - name: 2. Instalar dependencias
+      - name: 2. Instalar dependencias
         run: |
           set -euo pipefail
 
@@ -171,18 +171,23 @@ jobs:
 
           if [[ "$GAME_SOURCE" == *"drive.google.com"* ]]; then
             echo "Baixando URL do Google Drive..."
+
             python3 -m gdown \
               --fuzzy \
               "$GAME_SOURCE" \
               --output "$DOWNLOAD_FILE"
+
           elif [[ "$GAME_SOURCE" != http://* && "$GAME_SOURCE" != https://* ]]; then
             echo "Baixando pelo ID do Google Drive..."
+
             python3 -m gdown \
               "https://drive.google.com/uc?id=${GAME_SOURCE}" \
               --fuzzy \
               --output "$DOWNLOAD_FILE"
+
           else
             echo "Baixando URL direta..."
+
             curl \
               --fail \
               --location \
@@ -210,14 +215,14 @@ jobs:
             echo "Extraindo pacote..."
             7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
           else
-            echo "Arquivo nao parece ser compactado. Copiando para a pasta do jogo."
+            echo "Arquivo nao parece ser compactado."
 
             case "${GAME_SOURCE,,}" in
               *.nsp*) EXT="nsp" ;;
               *.nsz*) EXT="nsz" ;;
               *.xcz*) EXT="xcz" ;;
               *.nup*) EXT="nup" ;;
-              *)      EXT="xci" ;;
+              *) EXT="xci" ;;
             esac
 
             mv "$DOWNLOAD_FILE" "$TARGET_DIR/jogo.$EXT"
