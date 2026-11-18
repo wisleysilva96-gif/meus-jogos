@@ -28,45 +28,33 @@ jobs:
       - name: 1. Configurar ambiente
         run: |
           set -euo pipefail
-
           LATEST_XCODE=$(find /Applications \
             -maxdepth 1 \
             -type d \
             -name "Xcode*.app" \
             | sort -V \
             | tail -n 1)
-
           if [ -z "$LATEST_XCODE" ]; then
             echo "::error::Nenhuma instalacao do Xcode encontrada."
             exit 1
           fi
-
           echo "Selecionando Xcode: $LATEST_XCODE"
           sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
-
           echo "Arquitetura:"
           uname -m
-
           echo "macOS:"
           sw_vers
-
           echo "Xcode:"
           xcodebuild -version
-
           echo "Python:"
           python3 --version
-
           echo "Espaco disponivel:"
           df -h /
-
       - name: 2. Instalar dependencias
         run: |
           set -euo pipefail
-
           xcodebuild -downloadComponent MetalToolchain || true
-
           brew install xcodegen zstd glslang sevenzip
-
           python3 -m pip install \
             --break-system-packages \
             --ignore-installed \
@@ -78,41 +66,31 @@ jobs:
             zbic \
             pycryptodome \
             "backports.zstd; python_version < '3.14'"
-
           python3 -m pip show gdown lz4 capstone fonttools nsz zbic
-
       - name: 3. Clonar nxnative e aplicar patches
         run: |
           set -euo pipefail
-
           git clone --depth 1 https://github.com/seedds/nxnative.git
           cd nxnative
-
           METAL_FILE="dm/gfx/nvn/nvn_mtl.m"
           GAMEPAD_FILE="dm/ios/Sources/DmGamepad.m"
-
           if [ ! -f "$METAL_FILE" ]; then
             echo "::error::Arquivo $METAL_FILE nao encontrado."
             exit 1
           fi
-
           if [ ! -f "$GAMEPAD_FILE" ]; then
             echo "::error::Arquivo $GAMEPAD_FILE nao encontrado."
             exit 1
           fi
-
           sed -i '' 's/.*deviceMotionBody.*/\/\/ &/' "$GAMEPAD_FILE"
           sed -i '' 's/.*colorContentOffsetX.*/\/\/ &/' "$METAL_FILE"
           sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' "$METAL_FILE"
           sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' "$METAL_FILE"
           sed -i '' 's/.*outputOffsetX.*/\/\/ &/' "$METAL_FILE"
-
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path("dm/gfx/nvn/nvn_mtl.m")
           content = path.read_text()
-
           replacements = [
               (
                   'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n'
@@ -131,84 +109,65 @@ jobs:
                   ''
               )
           ]
-
           for old, new in replacements:
               count = content.count(old)
-
               if count == 0:
                   print("AVISO: patch nao encontrado:")
                   print(old[:100])
                   continue
-
               if count > 1:
                   raise SystemExit(
                       f"ERRO: trecho encontrado {count} vezes: {old[:100]}"
                   )
-
               content = content.replace(old, new, 1)
-
           path.write_text(content)
           print("Patches processados.")
           PY
-
       - name: 4. Recriar prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
         run: |
           set -euo pipefail
-
           if [ -z "${KEYS_CONTENT:-}" ]; then
             echo "::error::O secret PROD_KEYS esta vazio."
             exit 1
           fi
-
           mkdir -p "$HOME/keys"
           printf '%s\n' "$KEYS_CONTENT" > "$HOME/keys/prod.keys"
           chmod 600 "$HOME/keys/prod.keys"
-
           if [ ! -s "$HOME/keys/prod.keys" ]; then
             echo "::error::O arquivo prod.keys ficou vazio."
             exit 1
           fi
-
       - name: 5. Baixar e preparar o jogo
         env:
           GAME_SOURCE: ${{ inputs.gdrive_id }}
         run: |
           set -euo pipefail
-
           TARGET_DIR="$HOME/Games/TargetGame"
           DOWNLOAD_FILE="$RUNNER_TEMP/pacote_jogo"
-
           mkdir -p "$TARGET_DIR"
-
           if [ -z "${GAME_SOURCE:-}" ]; then
             echo "::error::O ID ou URL esta vazio."
             exit 1
           fi
-
           case "$GAME_SOURCE" in
             *drive.google.com*)
               FILE_ID=$(echo "$GAME_SOURCE" |
                 sed -n 's#.*\/d\/\([A-Za-z0-9_-]*\).*#\1#p')
-
               if [ -z "$FILE_ID" ]; then
                 FILE_ID=$(echo "$GAME_SOURCE" |
                   sed -n 's#.*[?&]id=\([A-Za-z0-9_-]*\).*#\1#p')
               fi
-
               if [ -z "$FILE_ID" ]; then
                 echo "::error::Nao foi possivel extrair o ID do Google Drive."
                 exit 1
               fi
-
               echo "Baixando pelo Google Drive..."
               python3 -m gdown "$FILE_ID" -O "$DOWNLOAD_FILE"
               ;;
-
             http://*|https://*)
               echo "Baixando por URL direta..."
-
               curl \
                 --fail \
                 --location \
@@ -218,47 +177,37 @@ jobs:
                 --output "$DOWNLOAD_FILE" \
                 "$GAME_SOURCE"
               ;;
-
             *)
               echo "Baixando pelo ID do Google Drive..."
               python3 -m gdown "$GAME_SOURCE" -O "$DOWNLOAD_FILE"
               ;;
           esac
-
           if [ ! -s "$DOWNLOAD_FILE" ]; then
             echo "::error::O download nao criou um arquivo valido."
             exit 1
           fi
-
-          FILE_SIZE=$(stat -f '\%z' "$DOWNLOAD_FILE")
+          FILE_SIZE=$(stat -f '%z' "$DOWNLOAD_FILE")
           FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
-
           echo "Tamanho: $FILE_SIZE bytes"
           echo "Tipo: $FILE_TYPE"
           ls -lh "$DOWNLOAD_FILE"
-
           if [ "$FILE_SIZE" -lt 100000 ]; then
             echo "::error::O arquivo baixado possui menos de 100 KB."
             exit 1
           fi
-
           if echo "$FILE_TYPE" | grep -qiE 'HTML|XML|text'; then
             echo "::error::O download retornou HTML ou texto."
             exit 1
           fi
-
           if echo "$FILE_TYPE" |
             grep -qiE 'archive|zip|7-zip|rar|tar|gzip|bzip2|xz|zstandard'; then
-
             echo "Extraindo arquivo..."
             7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
           else
             echo "Arquivo nao compactado detectado."
-
-            LOWER_SOURCE=$(printf '\%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
-            LOWER_TYPE=$(printf '\%s' "$FILE_TYPE" | tr '[:upper:]' '[:lower:]')
-
-            case "$LOWER_SOURCE$LOWER_TYPE" in
+            LOWER_SOURCE=$(printf '%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
+            LOWER_TYPE=$(printf '%s' "$FILE_TYPE" | tr '[:upper:]' '[:lower:]')
+            case "$LOWER_SOURCE $LOWER_TYPE" in
               *xci*|*"cartridge image"*) EXT="xci" ;;
               *nsp*) EXT="nsp" ;;
               *nsz*) EXT="nsz" ;;
@@ -266,8 +215,76 @@ jobs:
               *nup*) EXT="nup" ;;
               *) EXT="xci" ;;
             esac
-
             mv "$DOWNLOAD_FILE" "$TARGET_DIR/jogo.$EXT"
           fi
-
           find "$TARGET_DIR" -mindepth 2 -type f \
+            \( \
+              -iname "*.nsp" -o \
+              -iname "*.xci" -o \
+              -iname "*.nsz" -o \
+              -iname "*.xcz" -o \
+              -iname "*.nup" \
+            \) \
+            -exec mv -n {} "$TARGET_DIR/" \;
+          echo "Arquivos encontrados:"
+          find "$TARGET_DIR" -maxdepth 2 -type f -print
+          PACKAGE_COUNT=$(find "$TARGET_DIR" -type f \
+            \( \
+              -iname "*.nsp" -o \
+              -iname "*.xci" -o \
+              -iname "*.nsz" -o \
+              -iname "*.xcz" -o \
+              -iname "*.nup" \
+            \) \
+            | wc -l \
+            | tr -d ' ')
+          if [ "$PACKAGE_COUNT" -eq 0 ]; then
+            echo "::error::Nenhum pacote de jogo foi encontrado."
+            exit 1
+          fi
+          echo "Pacotes encontrados: $PACKAGE_COUNT"
+      - name: 6. Compilar IPA
+        env:
+          USE_SEPARATE_ROMFS: ${{ inputs.use_separate_romfs }}
+        run: |
+          set -euo pipefail
+          cd nxnative
+          SCRIPT_FILE="scripts/build_ipa_from_nsp.py"
+          if [ ! -f "$SCRIPT_FILE" ]; then
+            echo "::error::Script de compilacao nao encontrado."
+            exit 1
+          fi
+          mkdir -p "$HOME/OutputFinal"
+          EXTRA_ARGS=()
+          if [ "$USE_SEPARATE_ROMFS" = "true" ]; then
+            EXTRA_ARGS+=(--romfs separate)
+          fi
+          python3 "$SCRIPT_FILE" \
+            "$HOME/Games/TargetGame" \
+            -k "$HOME/keys/prod.keys" \
+            -o "$HOME/OutputFinal/JogoFinal.ipa" \
+            --allow-other-metal \
+            "${EXTRA_ARGS[@]}"
+          echo "Arquivos gerados:"
+          find "$HOME/OutputFinal" -maxdepth 2 -type f -print
+          du -sh "$HOME/OutputFinal"
+      - name: 7. Preparar arquivos para artefato
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
+          if [ -d "$HOME/OutputFinal" ]; then
+            cp -R "$HOME/OutputFinal/." \
+              "$GITHUB_WORKSPACE/OutputFinal/" || true
+          fi
+          find "$GITHUB_WORKSPACE/OutputFinal" \
+            -maxdepth 2 \
+            -type f \
+            -print || true
+      - name: 8. Guardar IPA e RomFS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jogo-Switch-Completo
+          path: OutputFinal/
+          retention-days: 5
+          if-no-files-found: warn
