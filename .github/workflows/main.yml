@@ -13,6 +13,9 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: write
+
 env:
   PIP_BREAK_SYSTEM_PACKAGES: "1"
   HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -21,10 +24,13 @@ env:
 
 jobs:
   build_ipa:
-    runs-on: macos-15 # Altere de macos-26 para macos-15 ou macos-latest
+    runs-on: macos-15
     timeout-minutes: 180
 
     steps:
+      - name: 0. Checkout do repositorio
+        uses: actions/checkout@v4
+
       - name: 1. Configurar ambiente
         run: |
           set -euo pipefail
@@ -117,7 +123,7 @@ jobs:
               (
                   'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n'
                   '#pragma clang diagnostic push\n'
-                  '#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // the name before 27, and the only one those systems have\n'
+                  '#pragma clang diagnostic ignored "-Wdeprecated-declarations"    // the name before 27, and the only one those systems have\n'
                   '        else u = sc.reactiveTextureUsage;\n'
                   '#pragma clang diagnostic pop',
                   'u = sc.reactiveTextureUsage;'
@@ -335,7 +341,7 @@ jobs:
           find "$HOME/OutputFinal" -maxdepth 2 -type f -print
           du -sh "$HOME/OutputFinal"
 
-      - name: 7. Preparar arquivos para artefato
+      - name: 7. Preparar arquivos para envio
         if: always()
         run: |
           mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
@@ -350,11 +356,25 @@ jobs:
             -type f \
             -print || true
 
-      - name: 8. Guardar IPA e RomFS
+      - name: 8. Publicar IPA e RomFS no GitHub Releases
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Jogo-Switch-Completo
-          path: OutputFinal/
-          retention-days: 5
-          if-no-files-found: warn
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          FILES=$(find "$GITHUB_WORKSPACE/OutputFinal" -maxdepth 2 -type f)
+
+          if [ -z "$FILES" ]; then
+            echo "::warning::Nenhum arquivo encontrado em OutputFinal para envio."
+            exit 0
+          fi
+
+          TAG_NAME="build-${GITHUB_RUN_NUMBER}"
+
+          gh release create "$TAG_NAME" \
+            "$GITHUB_WORKSPACE/OutputFinal/"* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Build #${GITHUB_RUN_NUMBER}" \
+            --notes "Arquivos compilados automaticamente via GitHub Actions."
