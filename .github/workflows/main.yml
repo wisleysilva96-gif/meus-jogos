@@ -255,12 +255,15 @@ jobs:
           else
             echo "Arquivo nao compactado detectado."
 
-            case "${GAME_SOURCE,,}" in
-              *.nsp*) EXT="nsp" ;;
-              *.nsz*) EXT="nsz" ;;
-              *.xcz*) EXT="xcz" ;;
-              *.nup*) EXT="nup" ;;
-              *.xci*) EXT="xci" ;;
+            LOWER_SOURCE=$(printf '%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
+            LOWER_TYPE=$(printf '%s' "$FILE_TYPE" | tr '[:upper:]' '[:lower:]')
+
+            case "$LOWER_SOURCE $LOWER_TYPE" in
+              *xci*|*"cartridge image"*) EXT="xci" ;;
+              *nsp*) EXT="nsp" ;;
+              *nsz*) EXT="nsz" ;;
+              *xcz*) EXT="xcz" ;;
+              *nup*) EXT="nup" ;;
               *) EXT="xci" ;;
             esac
 
