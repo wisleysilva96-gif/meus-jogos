@@ -13,9 +13,6 @@ on:
         default: true
         type: boolean
 
-permissions:
-  contents: write
-
 env:
   PIP_BREAK_SYSTEM_PACKAGES: "1"
   HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -24,13 +21,10 @@ env:
 
 jobs:
   build_ipa:
-    runs-on: macos-15
+    runs-on: macos-15 # Altere de macos-26 para macos-15 ou macos-latest
     timeout-minutes: 180
 
     steps:
-      - name: 0. Checkout do repositorio
-        uses: actions/checkout@v4
-
       - name: 1. Configurar ambiente
         run: |
           set -euo pipefail
@@ -98,12 +92,12 @@ jobs:
           GAMEPAD_FILE="dm/ios/Sources/DmGamepad.m"
 
           if [ ! -f "$METAL_FILE" ]; then
-            echo "::error::Ficheiro $METAL_FILE nao encontrado."
+            echo "::error::Arquivo $METAL_FILE nao encontrado."
             exit 1
           fi
 
           if [ ! -f "$GAMEPAD_FILE" ]; then
-            echo "::error::Ficheiro $GAMEPAD_FILE nao encontrado."
+            echo "::error::Arquivo $GAMEPAD_FILE nao encontrado."
             exit 1
           fi
 
@@ -114,33 +108,47 @@ jobs:
           sed -i '' 's/.*outputOffsetX.*/\/\/ &/' "$METAL_FILE"
 
           python3 - <<'PY'
-          import re
           from pathlib import Path
 
           path = Path("dm/gfx/nvn/nvn_mtl.m")
           content = path.read_text()
 
-          # 1. Trocar reactiveMaskTextureUsage por reactiveTextureUsage (suportado no SDK do macos-15)
-          content = content.replace("reactiveMaskTextureUsage", "reactiveTextureUsage")
-
-          # 2. Remover qualquer atribuicao a sc.reactiveMaskTexture (ex: sc.reactiveMaskTexture = bias;)
-          content = re.sub(r'[a-zA-Z0-9_]+\.reactiveMaskTexture\s*=\s*[^;]+;', '', content)
-
-          # 3. Remover atribuicoes a reactiveMaskContentOffsetX e Y
-          content = re.sub(r'[a-zA-Z0-9_]+\.reactiveMaskContentOffset[XY]\s*=\s*[^;]+;', '', content)
-
-          # Verificar se restou algum codigo ativo (ignorando linhas comentadas) com reactiveMask
-          active_lines = [
-              line for line in content.splitlines()
-              if "reactiveMask" in line and not line.strip().startswith("//")
+          replacements = [
+              (
+                  'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n'
+                  '#pragma clang diagnostic push\n'
+                  '#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // the name before 27, and the only one those systems have\n'
+                  '        else u = sc.reactiveTextureUsage;\n'
+                  '#pragma clang diagnostic pop',
+                  'u = sc.reactiveTextureUsage;'
+              ),
+              (
+                  'sc.exposureTexture = expo; sc.reactiveMaskTexture = bias;',
+                  'sc.exposureTexture = expo;'
+              ),
+              (
+                  'if (bias) { sc.reactiveMaskContentOffsetX = (NSUInteger)a.base[DLSS_BIAS][0]; sc.reactiveMaskContentOffsetY = (NSUInteger)a.base[DLSS_BIAS][1]; }',
+                  ''
+              )
           ]
 
-          if active_lines:
-              print("Linhas nao tratadas encontradas:", active_lines)
-              raise SystemExit("ERRO: Referencias ativas a reactiveMask ainda presentes!")
+          for old, new in replacements:
+              count = content.count(old)
+
+              if count == 0:
+                  print("AVISO: patch nao encontrado:")
+                  print(old[:100])
+                  continue
+
+              if count > 1:
+                  raise SystemExit(
+                      f"ERRO: trecho encontrado {count} vezes: {old[:100]}"
+                  )
+
+              content = content.replace(old, new, 1)
 
           path.write_text(content)
-          print("Patches aplicados com sucesso!")
+          print("Patches processados.")
           PY
 
       - name: 4. Recriar prod.keys
@@ -222,7 +230,7 @@ jobs:
             exit 1
           fi
 
-          FILE_SIZE=$(stat -f '%z' "$DOWNLOAD_FILE")
+          FILE_SIZE=$(stat -f '\%z' "$DOWNLOAD_FILE")
           FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
 
           echo "Tamanho: $FILE_SIZE bytes"
@@ -247,10 +255,10 @@ jobs:
           else
             echo "Arquivo nao compactado detectado."
 
-            LOWER_SOURCE=$(printf '%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
-            LOWER_TYPE=$(printf '%s' "$FILE_TYPE" | tr '[:upper:]' '[:lower:]')
+            LOWER_SOURCE=$(printf '\%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
+            LOWER_TYPE=$(printf '\%s' "$FILE_TYPE" | tr '[:upper:]' '[:lower:]')
 
-            case "$LOWER_SOURCE $LOWER_TYPE" in
+            case "$LOWER_SOURCE$LOWER_TYPE" in
               *xci*|*"cartridge image"*) EXT="xci" ;;
               *nsp*) EXT="nsp" ;;
               *nsz*) EXT="nsz" ;;
@@ -263,104 +271,3 @@ jobs:
           fi
 
           find "$TARGET_DIR" -mindepth 2 -type f \
-            \( \
-              -iname "*.nsp" -o \
-              -iname "*.xci" -o \
-              -iname "*.nsz" -o \
-              -iname "*.xcz" -o \
-              -iname "*.nup" \
-            \) \
-            -exec mv -n {} "$TARGET_DIR/" \;
-
-          echo "Arquivos encontrados:"
-          find "$TARGET_DIR" -maxdepth 2 -type f -print
-
-          PACKAGE_COUNT=$(find "$TARGET_DIR" -type f \
-            \( \
-              -iname "*.nsp" -o \
-              -iname "*.xci" -o \
-              -iname "*.nsz" -o \
-              -iname "*.xcz" -o \
-              -iname "*.nup" \
-            \) \
-            | wc -l \
-            | tr -d ' ')
-
-          if [ "$PACKAGE_COUNT" -eq 0 ]; then
-            echo "::error::Nenhum pacote de jogo foi encontrado."
-            exit 1
-          fi
-
-          echo "Pacotes encontrados: $PACKAGE_COUNT"
-
-      - name: 6. Compilar IPA
-        env:
-          USE_SEPARATE_ROMFS: ${{ inputs.use_separate_romfs }}
-        run: |
-          set -euo pipefail
-
-          cd nxnative
-
-          SCRIPT_FILE="scripts/build_ipa_from_nsp.py"
-
-          if [ ! -f "$SCRIPT_FILE" ]; then
-            echo "::error::Script de compilacao nao encontrado."
-            exit 1
-          fi
-
-          mkdir -p "$HOME/OutputFinal"
-
-          EXTRA_ARGS=()
-
-          if [ "$USE_SEPARATE_ROMFS" = "true" ]; then
-            EXTRA_ARGS+=(--romfs separate)
-          fi
-
-          python3 "$SCRIPT_FILE" \
-            "$HOME/Games/TargetGame" \
-            -k "$HOME/keys/prod.keys" \
-            -o "$HOME/OutputFinal/JogoFinal.ipa" \
-            --allow-other-metal \
-            "${EXTRA_ARGS[@]}"
-
-          echo "Arquivos gerados:"
-          find "$HOME/OutputFinal" -maxdepth 2 -type f -print
-          du -sh "$HOME/OutputFinal"
-
-      - name: 7. Preparar arquivos para envio
-        if: always()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
-
-          if [ -d "$HOME/OutputFinal" ]; then
-            cp -R "$HOME/OutputFinal/." \
-              "$GITHUB_WORKSPACE/OutputFinal/" || true
-          fi
-
-          find "$GITHUB_WORKSPACE/OutputFinal" \
-            -maxdepth 2 \
-            -type f \
-            -print || true
-
-      - name: 8. Publicar IPA e RomFS no GitHub Releases
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          FILES=$(find "$GITHUB_WORKSPACE/OutputFinal" -maxdepth 2 -type f)
-
-          if [ -z "$FILES" ]; then
-            echo "::warning::Nenhum arquivo encontrado em OutputFinal para envio."
-            exit 0
-          fi
-
-          TAG_NAME="build-${GITHUB_RUN_NUMBER}"
-
-          gh release create "$TAG_NAME" \
-            "$GITHUB_WORKSPACE/OutputFinal/"* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --title "Build #${GITHUB_RUN_NUMBER}" \
-            --notes "Arquivos compilados automaticamente via GitHub Actions."
