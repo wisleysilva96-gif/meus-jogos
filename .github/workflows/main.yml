@@ -21,7 +21,7 @@ env:
 
 jobs:
   build_ipa:
-    runs-on: macos-latest # Altere de macos-26 para macos-15 ou macos-latest
+    runs-on: macos-15 # Altere de macos-26 para macos-15 ou macos-latest
     timeout-minutes: 180
 
     steps:
