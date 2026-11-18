@@ -13,6 +13,9 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: write
+
 env:
   PIP_BREAK_SYSTEM_PACKAGES: "1"
   HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -21,10 +24,13 @@ env:
 
 jobs:
   build_ipa:
-    runs-on: macos-15 # Altere de macos-26 para macos-15 ou macos-latest
+    runs-on: macos-15
     timeout-minutes: 180
 
     steps:
+      - name: 0. Checkout do repositorio
+        uses: actions/checkout@v4
+
       - name: 1. Configurar ambiente
         run: |
           set -euo pipefail
@@ -50,6 +56,7 @@ jobs:
           python3 --version
           echo "Espaco disponivel:"
           df -h /
+
       - name: 2. Instalar dependencias
         run: |
           set -euo pipefail
@@ -67,6 +74,7 @@ jobs:
             pycryptodome \
             "backports.zstd; python_version < '3.14'"
           python3 -m pip show gdown lz4 capstone fonttools nsz zbic
+
       - name: 3. Clonar nxnative e aplicar patches
         run: |
           set -euo pipefail
@@ -123,6 +131,7 @@ jobs:
           path.write_text(content)
           print("Patches processados.")
           PY
+
       - name: 4. Recriar prod.keys
         env:
           KEYS_CONTENT: ${{ secrets.PROD_KEYS }}
@@ -139,18 +148,20 @@ jobs:
             echo "::error::O arquivo prod.keys ficou vazio."
             exit 1
           fi
+
       - name: 5. Baixar e preparar o jogo
         env:
           GAME_SOURCE: ${{ inputs.gdrive_id }}
         run: |
           set -euo pipefail
-          TARGET_DIR="$HOME/Games/TargetGame"
-          DOWNLOAD_FILE="$RUNNER_TEMP/pacote_jogo"
-          mkdir -p "$TARGET_DIR"
           if [ -z "${GAME_SOURCE:-}" ]; then
             echo "::error::O ID ou URL esta vazio."
             exit 1
           fi
+          echo "::add-mask::$GAME_SOURCE"
+          TARGET_DIR="$HOME/Games/TargetGame"
+          DOWNLOAD_FILE="$RUNNER_TEMP/pacote_jogo"
+          mkdir -p "$TARGET_DIR"
           case "$GAME_SOURCE" in
             *drive.google.com*)
               FILE_ID=$(echo "$GAME_SOURCE" |
@@ -163,12 +174,15 @@ jobs:
                 echo "::error::Nao foi possivel extrair o ID do Google Drive."
                 exit 1
               fi
+              echo "::add-mask::$FILE_ID"
               echo "Baixando pelo Google Drive..."
-              python3 -m gdown "$FILE_ID" -O "$DOWNLOAD_FILE"
+              python3 -m gdown --quiet "$FILE_ID" -O "$DOWNLOAD_FILE"
               ;;
             http://*|https://*)
               echo "Baixando por URL direta..."
               curl \
+                --silent \
+                --show-error \
                 --fail \
                 --location \
                 --retry 5 \
@@ -179,7 +193,7 @@ jobs:
               ;;
             *)
               echo "Baixando pelo ID do Google Drive..."
-              python3 -m gdown "$GAME_SOURCE" -O "$DOWNLOAD_FILE"
+              python3 -m gdown --quiet "$GAME_SOURCE" -O "$DOWNLOAD_FILE"
               ;;
           esac
           if [ ! -s "$DOWNLOAD_FILE" ]; then
@@ -190,7 +204,6 @@ jobs:
           FILE_TYPE=$(file -b "$DOWNLOAD_FILE")
           echo "Tamanho: $FILE_SIZE bytes"
           echo "Tipo: $FILE_TYPE"
-          ls -lh "$DOWNLOAD_FILE"
           if [ "$FILE_SIZE" -lt 100000 ]; then
             echo "::error::O arquivo baixado possui menos de 100 KB."
             exit 1
@@ -202,7 +215,7 @@ jobs:
           if echo "$FILE_TYPE" |
             grep -qiE 'archive|zip|7-zip|rar|tar|gzip|bzip2|xz|zstandard'; then
             echo "Extraindo arquivo..."
-            7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y
+            7z x "$DOWNLOAD_FILE" -o"$TARGET_DIR" -y >/dev/null
           else
             echo "Arquivo nao compactado detectado."
             LOWER_SOURCE=$(printf '%s' "$GAME_SOURCE" | tr '[:upper:]' '[:lower:]')
@@ -226,8 +239,6 @@ jobs:
               -iname "*.nup" \
             \) \
             -exec mv -n {} "$TARGET_DIR/" \;
-          echo "Arquivos encontrados:"
-          find "$TARGET_DIR" -maxdepth 2 -type f -print
           PACKAGE_COUNT=$(find "$TARGET_DIR" -type f \
             \( \
               -iname "*.nsp" -o \
@@ -243,6 +254,7 @@ jobs:
             exit 1
           fi
           echo "Pacotes encontrados: $PACKAGE_COUNT"
+
       - name: 6. Compilar IPA
         env:
           USE_SEPARATE_ROMFS: ${{ inputs.use_separate_romfs }}
@@ -268,7 +280,8 @@ jobs:
           echo "Arquivos gerados:"
           find "$HOME/OutputFinal" -maxdepth 2 -type f -print
           du -sh "$HOME/OutputFinal"
-      - name: 7. Preparar arquivos para artefato
+
+      - name: 7. Preparar arquivos para envio
         if: always()
         run: |
           mkdir -p "$GITHUB_WORKSPACE/OutputFinal"
@@ -280,11 +293,22 @@ jobs:
             -maxdepth 2 \
             -type f \
             -print || true
-      - name: 8. Guardar IPA e RomFS
+
+      - name: 8. Publicar IPA e RomFS no GitHub Releases
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Jogo-Switch-Completo
-          path: OutputFinal/
-          retention-days: 5
-          if-no-files-found: warn
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          FILES=$(find "$GITHUB_WORKSPACE/OutputFinal" -maxdepth 2 -type f)
+          if [ -z "$FILES" ]; then
+            echo "::warning::Nenhum arquivo encontrado em OutputFinal para envio."
+            exit 0
+          fi
+          TAG_NAME="build-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG_NAME" \
+            "$GITHUB_WORKSPACE/OutputFinal/"* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Build #${GITHUB_RUN_NUMBER}" \
+            --notes "Arquivos compilados automaticamente."
