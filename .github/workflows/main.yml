@@ -98,12 +98,12 @@ jobs:
           GAMEPAD_FILE="dm/ios/Sources/DmGamepad.m"
 
           if [ ! -f "$METAL_FILE" ]; then
-            echo "::error::Arquivo $METAL_FILE nao encontrado."
+            echo "::error::Ficheiro $METAL_FILE nao encontrado."
             exit 1
           fi
 
           if [ ! -f "$GAMEPAD_FILE" ]; then
-            echo "::error::Arquivo $GAMEPAD_FILE nao encontrado."
+            echo "::error::Ficheiro $GAMEPAD_FILE nao encontrado."
             exit 1
           fi
 
@@ -112,49 +112,29 @@ jobs:
           sed -i '' 's/.*depthContentOffsetX.*/\/\/ &/' "$METAL_FILE"
           sed -i '' 's/.*motionContentOffsetX.*/\/\/ &/' "$METAL_FILE"
           sed -i '' 's/.*outputOffsetX.*/\/\/ &/' "$METAL_FILE"
+          sed -i '' 's/.*reactiveMaskContentOffsetX.*/\/\/ &/' "$METAL_FILE"
 
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path("dm/gfx/nvn/nvn_mtl.m")
           content = path.read_text()
 
-          replacements = [
-              (
-                  'if (@available(macOS 27.0, iOS 27.0, *)) u = sc.reactiveMaskTextureUsage;\n'
-                  '#pragma clang diagnostic push\n'
-                  '#pragma clang diagnostic ignored "-Wdeprecated-declarations"    // the name before 27, and the only one those systems have\n'
-                  '        else u = sc.reactiveTextureUsage;\n'
-                  '#pragma clang diagnostic pop',
-                  'u = sc.reactiveTextureUsage;'
-              ),
-              (
-                  'sc.exposureTexture = expo; sc.reactiveMaskTexture = bias;',
-                  'sc.exposureTexture = expo;'
-              ),
-              (
-                  'if (bias) { sc.reactiveMaskContentOffsetX = (NSUInteger)a.base[DLSS_BIAS][0]; sc.reactiveMaskContentOffsetY = (NSUInteger)a.base[DLSS_BIAS][1]; }',
-                  ''
-              )
-          ]
+          # 1. Substituir reactiveMaskTextureUsage por reactiveTextureUsage
+          content = content.replace("sc.reactiveMaskTextureUsage", "sc.reactiveTextureUsage")
 
-          for old, new in replacements:
-              count = content.count(old)
+          # 2. Remover atribuicao de reactiveMaskTexture inexistente no SDK do macos-15
+          content = content.replace("sc.reactiveMaskTexture = bias;", "")
 
-              if count == 0:
-                  print("AVISO: patch nao encontrado:")
-                  print(old[:100])
-                  continue
+          # 3. Garantir que qualquer linha restante com reactiveMaskContentOffset seja comentada
+          content = re.sub(r'^.*reactiveMaskContentOffset.*$', r'// \g<0>', content, flags=re.MULTILINE)
 
-              if count > 1:
-                  raise SystemExit(
-                      f"ERRO: trecho encontrado {count} vezes: {old[:100]}"
-                  )
-
-              content = content.replace(old, new, 1)
+          if "reactiveMaskTextureUsage" in content or "reactiveMaskTexture" in content:
+              raise SystemExit("ERRO: Referencias a reactiveMask ainda presentes apos o patch!")
 
           path.write_text(content)
-          print("Patches processados.")
+          print("Patches aplicados e verificados com sucesso.")
           PY
 
       - name: 4. Recriar prod.keys
